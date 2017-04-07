@@ -417,6 +417,14 @@ tf_cuda_library(
 )
 
 cc_library(
+    name = "overflow",
+    hdrs = ["util/overflow.h"],
+    deps = [
+        ":framework_lite",
+    ],
+)
+
+cc_library(
     name = "reader_base",
     srcs = ["framework/reader_base.cc"],
     hdrs = ["framework/reader_base.h"],
@@ -486,6 +494,7 @@ cc_library(
 tf_gen_op_libs(
     op_lib_names = [
         "array_ops",
+        "audio_ops",
         "candidate_sampling_ops",
         "control_flow_ops",
         "ctc_ops",
@@ -553,6 +562,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":array_ops_op_lib",
+        ":audio_ops_op_lib",
         ":candidate_sampling_ops_op_lib",
         ":control_flow_ops_op_lib",
         ":ctc_ops_op_lib",
@@ -711,7 +721,8 @@ cc_library(
         "//tensorflow/core/kernels:quantized_ops",
     ]) + if_mkl([
         "//tensorflow/core/kernels:mkl_conv_op",
-        "//tensorflow/core/kernels:mkl_matmul_op",
+        "//tensorflow/core/kernels:mkl_pooling_ops",
+        "//tensorflow/core/kernels:mkl_relu_op",
         "//tensorflow/core/kernels:mkl_tfconv_op",
     ]),
 )
@@ -1249,7 +1260,7 @@ cc_library(
         "platform/tracing.h",
     ],
     copts = tf_copts(),
-    defines = tf_additional_lib_defines(),
+    defines = tf_additional_lib_defines() + ["SNAPPY"],
     linkopts = select({
         "//tensorflow:freebsd": [],
         "//conditions:default": ["-ldl"],
@@ -1260,6 +1271,7 @@ cc_library(
         ":protos_all_cc",
         "//third_party/eigen3",
         "//tensorflow/core/platform/default/build_config:platformlib",
+        "@snappy",
         "@zlib_archive//:zlib",
     ],
 )
@@ -1379,6 +1391,7 @@ tf_cuda_library(
         "framework/unique_tensor_references.h",
         "util/command_line_flags.h",
         "util/env_var.h",
+        "util/equal_graph_def.h",
         "util/presized_cuckoo_map.h",
         "util/tensor_slice_set.h",
         "util/tensor_slice_util.h",
@@ -1848,6 +1861,18 @@ tf_cc_test(
     ],
 )
 
+tf_cc_test(
+    name = "util_overflow_test",
+    size = "small",
+    srcs = ["util/overflow_test.cc"],
+    deps = [
+        ":framework_lite",
+        ":overflow",
+        ":test",
+        ":test_main",
+    ],
+)
+
 cc_test(
     name = "lib_jpeg_jpeg_mem_unittest",
     srcs = ["lib/jpeg/jpeg_mem_unittest.cc"],
@@ -1950,7 +1975,6 @@ tf_cc_tests(
         "framework/unique_tensor_references_test.cc",
         "graph/algorithm_test.cc",
         "graph/edgeset_test.cc",
-        "graph/equal_graph_def_test.cc",
         "graph/graph_def_builder_test.cc",
         "graph/graph_partition_test.cc",
         "graph/graph_test.cc",
@@ -1962,6 +1986,7 @@ tf_cc_tests(
         "util/bcast_test.cc",
         "util/command_line_flags_test.cc",
         "util/device_name_utils_test.cc",
+        "util/equal_graph_def_test.cc",
         "util/events_writer_test.cc",
         "util/example_proto_fast_parsing_test.cc",
         "util/example_proto_helper_test.cc",
@@ -2070,7 +2095,8 @@ tf_cc_test_mkl(
         "//tensorflow/cc:scope",
         "//tensorflow/cc:sendrecv_ops",
         "//tensorflow/core/kernels:mkl_conv_op",
-        "//tensorflow/core/kernels:mkl_matmul_op",
+        "//tensorflow/core/kernels:mkl_pooling_ops",
+        "//tensorflow/core/kernels:mkl_relu_op",
         "//tensorflow/core/kernels:mkl_tfconv_op",
         "//tensorflow/core/kernels:ops_util",
         "//third_party/eigen3",

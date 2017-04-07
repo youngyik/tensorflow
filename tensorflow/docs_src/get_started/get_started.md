@@ -1,4 +1,3 @@
-
 # Getting Started With TensorFlow
 
 This guide gets you started programming in TensorFlow. Before using this guide,
@@ -110,7 +109,7 @@ print("sess.run(node3): ",sess.run(node3))
 ```
 The last two print statements produce
 ```
-node3:  Tensor("Add_2:0", shape=(), dtype=float32)
+node3:  Tensor("Add:0", shape=(), dtype=float32)
 sess.run(node3):  7.0
 ```
 
