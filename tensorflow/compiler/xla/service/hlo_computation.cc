@@ -35,9 +35,13 @@ limitations under the License.
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/gtl/flatset.h"
+#include "tensorflow/core/lib/strings/str_util.h"
+#include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/logging.h"
 
 namespace xla {
+
+using ::tensorflow::strings::StrCat;
 
 std::unique_ptr<HloComputation> HloComputation::Builder::Build(
     HloInstruction* root_instruction) {
@@ -91,12 +95,7 @@ HloInstruction* HloComputation::AddInstruction(
 HloInstruction* HloComputation::AddInstructionInternal(
     std::unique_ptr<HloInstruction> instruction) {
   // Generate a unique name for the instruction.
-  instruction->set_name(
-      instruction_name_uniquer_.GetUniqueName(instruction->name()));
-  if (instruction->opcode() == HloOpcode::kParameter) {
-    instruction->set_parameter_name(
-        instruction_name_uniquer_.GetUniqueName(instruction->parameter_name()));
-  }
+  instruction->UniquifyName(&instruction_name_uniquer_);
   Reparent(instruction.get());
   HloInstruction* pinst = instruction.get();
   instruction_iterators_[pinst] =
@@ -131,9 +130,24 @@ Status HloComputation::RemoveParameter(int64 param_no) {
 
   while (param_no < param_instructions_.size()) {
     param_instruction = param_instructions_[param_no];
-    HloInstruction* new_instr = AddInstructionInternal(
-        HloInstruction::CreateParameter(param_no, param_instruction->shape(),
-                                        param_instruction->parameter_name()));
+    string param_name = param_instruction->parameter_name();
+    // Fusion parameters are named foo.param_1, bar.param_2, etc. We are
+    // renumbering the parameters so replace the final number in the name with
+    // the updated value.
+    const string param_underscore = ".param_";
+    size_t index = param_name.rfind(param_underscore);
+    if (index == string::npos) {
+      string after_param = name().substr(index + param_underscore.size());
+      int64 numeric_suffix;
+      if (tensorflow::strings::safe_strto64(after_param, &numeric_suffix)) {
+        param_name =
+            StrCat(param_name.substr(0, index), param_underscore, param_no);
+      }
+    }
+
+    HloInstruction* new_instr =
+        AddInstructionInternal(HloInstruction::CreateParameter(
+            param_no, param_instruction->shape(), param_name));
     TF_RETURN_IF_ERROR(param_instruction->ReplaceAllUsesWith(new_instr));
     new_instr->SetParentFusion(root_instruction_->fusion_instruction());
     param_instructions_[param_no] = new_instr;
@@ -297,7 +311,6 @@ void ComputeComputationPostOrder(
 
   visited->insert(computation);
   post_order->push_back(computation);
-  return;
 }
 
 }  // namespace
@@ -365,6 +378,16 @@ string HloComputation::ToString(int nested_level) const {
   }
   s << "}";
   return s.str();
+}
+
+HloComputationProto HloComputation::ToProto() const {
+  HloComputationProto proto;
+  proto.set_name(name_);
+  for (const HloInstruction* instruction : MakeInstructionPostOrder()) {
+    HloInstructionProto instruction_proto = instruction->ToProto();
+    proto.add_instructions()->Swap(&instruction_proto);
+  }
+  return proto;
 }
 
 void HloComputation::FuseInstructionsInto(
@@ -475,7 +498,9 @@ bool HloComputation::operator==(const HloComputation& other) const {
         // If <a,b> are visited but not identical, the recursion should have
         // been aborted. So, if <a,b> are visited at this point, they must be
         // identical.
-        if (visited.count(std::make_pair(a, b)) > 0) return true;
+        if (visited.count(std::make_pair(a, b)) > 0) {
+          return true;
+        }
         visited.emplace(a, b);
         return a->Identical(
             *b, eq, [](const HloComputation* a, const HloComputation* b) {
@@ -498,6 +523,15 @@ Status HloComputation::ReplaceInstruction(HloInstruction* old_instruction,
                                      new_instruction->shape()));
   VLOG(10) << "transformed " << old_instruction->ToString() << " to "
            << new_instruction->ToString();
+  // Try to add metadata for HLO instructions that are created to replace
+  // existing HLO instructions (e.g. during optimizations). The assumption is
+  // that the old instruction and the new instruction would perform the same
+  // function, and that they would be correlated to the same TF op. This might
+  // not always be correct since HLO optimizations can cross TF op boundaries.
+  // But still this seems to be better than nothing.
+  if (new_instruction->metadata().op_name().empty()) {
+    new_instruction->set_metadata(old_instruction->metadata());
+  }
   TF_RETURN_IF_ERROR(
       ReplaceUsesOfInstruction(old_instruction, new_instruction));
   return RemoveInstructionAndUnusedOperands(old_instruction);
@@ -670,6 +704,10 @@ std::unique_ptr<HloComputation> HloComputation::Clone(const string& suffix) {
     }
   }
   return result;
+}
+
+void HloComputation::UniquifyName(NameUniquer* name_uniquer) {
+  name_ = name_uniquer->GetUniqueName(name_);
 }
 
 }  // namespace xla
